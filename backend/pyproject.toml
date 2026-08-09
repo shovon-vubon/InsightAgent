@@ -17,6 +17,8 @@ dependencies = [
     "argon2-cffi>=23.1",
     "pyjwt>=2.10",
     "email-validator>=2.2",
+    "openai>=1.60",
+    "anthropic>=0.45",
 ]
 
 [dependency-groups]

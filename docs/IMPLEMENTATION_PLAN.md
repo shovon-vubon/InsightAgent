@@ -1,6 +1,6 @@
 # InsightAgent — Implementation Plan
 
-**Status:** Phase 1 complete (foundation). No AI functionality yet — that is Phase 2.
+**Status:** Phase 2 complete (LLM layer & streaming chat). No retrieval or tools yet — that is Phase 3.
 **Author:** Phase 0 architecture review, updated per phase
 **Last updated:** 2026-08-09
 **Repository:** `E:\projects\InsightAgent` (branches: `main` ← `develop` ← `feature/foundation`)
@@ -789,7 +789,7 @@ Everything after deepens it.
 | --- | --- | --- | --- |
 | **0** | This document, repo init | ½ d | ✅ **Done** |
 | **1** | Foundation: scaffold, settings, Docker, Postgres+pgvector, Redis, Alembic, health, auth, CI skeleton | 3–4 d | ✅ **Done** — all 9 criteria met, see [Appendix D](#appendix-d--phase-outcomes) |
-| **2** | LLM layer: provider protocol, OpenAI/Anthropic/Ollama/Fake, streaming chat, conversation persistence, usage+cost | 3 d | Streamed reply persists; `llm_calls` shows real tokens & cost |
+| **2** | LLM layer: provider protocol, OpenAI/Anthropic/Ollama/Fake, streaming chat, conversation persistence, usage+cost | 3 d | ✅ **Done** — see [Appendix D](#appendix-d--phase-outcomes) |
 | **3** | Knowledge base: upload → extract → chunk → embed → pgvector → dense search → cited answers | 4–5 d | Upload PDF, ask question, answer cites correct page |
 | **4** | Advanced RAG: lexical, RRF, reranking, query preprocessing, retrieval eval + ablation table | 3–4 d | Measured Recall@5 for ≥3 configurations |
 | **5** | SQL agent: NovaRetail generator, schema retrieval, text-to-SQL, validator, execution | 4–5 d | Correct answers to DB questions; every destructive-SQL test blocked |
@@ -1162,11 +1162,56 @@ Recorded because the root cause matters more than the patch (brief §64).
 
 3. **`UnmappedInstanceError` from the ownership guard.** `owner_column = Conversation.user_id` as a class attribute is an `InstrumentedAttribute` — a descriptor — so reading it through `self` invoked `__get__` with the repository as the instance. Fixed by making it a `classmethod`, with the reason documented at the definition.
 
-### Notes carried into Phase 2
+### Notes carried out of Phase 1
 
 - **Host ports remapped to 8010/3010** in the local `.env`; the developer's unrelated `nexus_rooppur_mvp` stack occupies 8000/3000. `.env.example` keeps 8000/3000 as the documented defaults.
-- **Ollama is still not installed.** Required for the local-model provider tier in Phase 2.
 - Docker's disk image was not relocated off `C:`. The build succeeded, but [R1](#r1-c-drive-has-only-165-gb-free) still stands and will bite once torch and model weights land in Phase 3–4.
+
+---
+
+### Phase 2 — LLM layer & streaming chat ✅ Complete (2026-08-10)
+
+Branch `feature/llm-layer`. All three acceptance criteria met.
+
+| # | Criterion | Evidence |
+| --- | --- | --- |
+| 1 | A message returns a streamed response | SSE verified against the live stack **through the Next.js proxy**: `user_message` → 20 × `delta` → `done` |
+| 2 | Conversation persists | Both messages stored in sequence; the first user message auto-titles the conversation |
+| 3 | Token usage is recorded | One `llm_calls` row per call with tokens, cost, latency, retries, and prompt name/version/checksum |
+
+**Delivered:** `LLMProvider` base class owning retry, timing, and error
+classification; OpenAI, Anthropic, Ollama, and a deterministic `FakeProvider`;
+versioned prompt registry with content checksums; pricing table with nullable cost
+for unpriced models; conversation CRUD; SSE streaming chat; an admin usage rollup
+that reports `cost_coverage`; and a React chat workspace consuming the stream.
+
+**Quality gates:** 133 backend tests, 18 frontend tests, `ruff` clean,
+`mypy --strict` clean over `app` and `tests`, migration `be3cf5c03cd4` verified
+reversible with `alembic check` reporting no drift.
+
+Design rationale in [ADR 0004](adr/0004-llm-provider-abstraction.md).
+
+### Not verified in Phase 2 — stated plainly
+
+The OpenAI, Anthropic, and Ollama providers are **implemented but never executed
+against a live API**: no key is configured and Ollama is still not installed.
+Their request shapes, streaming handling, and error mapping are typed and reviewed
+but unproven. Only `FakeProvider` has run end to end. Recorded in the README's
+Limitations, and it must be resolved before any model-comparison claim is made.
+
+### Bugs found and fixed during Phase 2
+
+1. **Conversations could not be deleted.** `cascade="all, delete-orphan"` combined with `lazy="raise"` made the ORM try to load the children in order to delete them, which the relationship correctly refused. Fixed with `passive_deletes=True`, leaving the work to the `ON DELETE CASCADE` that already existed in the schema.
+
+2. **Deletes were invisible within a unit of work.** Sessions run with `autoflush=False`, so a delete that was marked but not flushed left a later query in the same request still returning the row. `ConversationRepository.delete` now flushes, matching every other write method there.
+
+3. **The documented bootstrap admin could never log in.** `.env.example` shipped `ADMIN_EMAIL=admin@insightagent.local`, and `.local` is a reserved TLD that `email-validator` rejects — so `make seed` reported success and the account was then rejected at login. Two fixes: a routable default, and the seed script now applies the same email validation as the register endpoint instead of writing straight through the repository. Pinned by a regression test.
+
+### Notes carried into Phase 3
+
+- **Ollama is still not installed**, and no provider API key is set. Both are needed before any real-model claim.
+- The `agent_run_id` foreign key on `llm_calls` and `messages` lands with `agent_runs` in Phase 7; calls are attributed to a conversation until then.
+- Phase 3 adds torch and sentence-transformers, which is where [R1](#r1-c-drive-has-only-165-gb-free) (disk) and [R2](#r2-system-python-is-314-ahead-of-the-ml-wheel-ecosystem) (wheels) actually bite.
 
 ---
 

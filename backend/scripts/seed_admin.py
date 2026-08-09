@@ -11,6 +11,9 @@ import asyncio
 import os
 import sys
 
+from pydantic import TypeAdapter, ValidationError
+from pydantic.networks import EmailStr
+
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
 from app.db.session import create_database
@@ -30,6 +33,20 @@ async def main() -> int:
         return 1
     if len(password) < settings.PASSWORD_MIN_LENGTH:
         logger.error("seed_admin_password_too_short", minimum=settings.PASSWORD_MIN_LENGTH)
+        return 1
+
+    # This path writes through the repository, so it skips the Pydantic schema the
+    # register endpoint uses. Without the same check, a reserved-TLD address such
+    # as `admin@example.local` seeds happily and can then never log in, because
+    # the login schema rejects it.
+    try:
+        TypeAdapter(EmailStr).validate_python(email)
+    except ValidationError:
+        logger.error(
+            "seed_admin_invalid_email",
+            reason="ADMIN_EMAIL is not a routable address; reserved TLDs "
+            "(.local, .localhost, .example, .invalid, .test) cannot be used",
+        )
         return 1
 
     database = create_database(settings)

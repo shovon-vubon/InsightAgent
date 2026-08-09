@@ -52,7 +52,15 @@ class TestRegistration:
 
     @pytest.mark.parametrize(
         ("field", "value"),
-        [("password", "short"), ("email", "not-an-email"), ("password", "")],
+        [
+            ("password", "short"),
+            ("email", "not-an-email"),
+            ("password", ""),
+            # Reserved TLDs are not routable and are rejected. Pinned because the
+            # bootstrap admin was once seeded at `admin@insightagent.local`, which
+            # created an account that could never log in.
+            ("email", "admin@insightagent.local"),
+        ],
     )
     async def test_invalid_payloads_are_rejected(
         self, client: AsyncClient, field: str, value: str

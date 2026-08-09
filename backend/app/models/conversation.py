@@ -46,9 +46,13 @@ class Conversation(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     title: Mapped[str] = mapped_column(String(300), nullable=False, default="New research")
 
     user: Mapped[User] = relationship(back_populates="conversations", lazy="raise")
+    # passive_deletes leaves the cascade to the database's ON DELETE CASCADE.
+    # Without it the ORM tries to load the collection to delete children itself,
+    # which `lazy="raise"` correctly refuses.
     messages: Mapped[list[Message]] = relationship(
         back_populates="conversation",
         cascade="all, delete-orphan",
+        passive_deletes=True,
         order_by="Message.sequence",
         lazy="raise",
     )

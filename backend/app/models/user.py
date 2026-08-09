@@ -41,11 +41,19 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     role: Mapped[UserRole] = mapped_column(UserRoleType, default=UserRole.USER, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
+    # passive_deletes: the database's ON DELETE CASCADE removes children, so the
+    # ORM never has to load a collection that `lazy="raise"` forbids loading.
     refresh_tokens: Mapped[list[RefreshToken]] = relationship(
-        back_populates="user", cascade="all, delete-orphan", lazy="raise"
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        lazy="raise",
     )
     conversations: Mapped[list[Conversation]] = relationship(
-        back_populates="user", cascade="all, delete-orphan", lazy="raise"
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        lazy="raise",
     )
 
     @property

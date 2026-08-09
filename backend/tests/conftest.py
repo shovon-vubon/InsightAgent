@@ -28,6 +28,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import (
+    AsyncConnection,
     AsyncEngine,
     AsyncSession,
     async_sessionmaker,
@@ -35,10 +36,18 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool
 
-from app.api.deps import AdminUser, CurrentUser, get_database, get_db, get_redis
+from app.api.deps import (
+    AdminUser,
+    CurrentUser,
+    get_database,
+    get_db,
+    get_llm_provider,
+    get_redis,
+)
 from app.cache.redis import create_redis
 from app.core.config import Environment, Settings
 from app.db.session import Database
+from app.llm.fake import FakeProvider
 from app.main import create_app
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -131,25 +140,56 @@ async def engine(test_database_url: str) -> AsyncIterator[AsyncEngine]:
 
 
 @pytest.fixture
-async def db_session(engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
-    """A session inside an outer transaction that is always rolled back.
+async def db_connection(engine: AsyncEngine) -> AsyncIterator[AsyncConnection]:
+    """One connection per test, in a transaction that is always rolled back.
 
-    `join_transaction_mode="create_savepoint"` means application code calling
-    `session.commit()` â€” as the refresh-token replay path deliberately does â€”
-    releases a savepoint instead of committing for real, so the rollback below
-    still cleans up.
+    Everything in a test shares this single connection. `ChatService` opens its
+    own sessions and commits them, so if it ran on a second connection it could
+    not see a conversation the API had created but not yet committed.
     """
     async with engine.connect() as connection:
         transaction = await connection.begin()
-        factory = async_sessionmaker(
-            bind=connection,
-            expire_on_commit=False,
-            autoflush=False,
-            join_transaction_mode="create_savepoint",
-        )
-        async with factory() as session:
-            yield session
+        yield connection
         await transaction.rollback()
+
+
+@pytest.fixture
+def session_factory(db_connection: AsyncConnection) -> async_sessionmaker[AsyncSession]:
+    """Sessions joined to the test transaction.
+
+    `join_transaction_mode="create_savepoint"` means application code calling
+    `session.commit()` - as the refresh-token replay path and every chat write
+    deliberately do - releases a savepoint rather than committing for real, so the
+    outer rollback still cleans up.
+    """
+    return async_sessionmaker(
+        bind=db_connection,
+        expire_on_commit=False,
+        autoflush=False,
+        join_transaction_mode="create_savepoint",
+    )
+
+
+@pytest.fixture
+async def db_session(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> AsyncIterator[AsyncSession]:
+    async with session_factory() as session:
+        yield session
+
+
+@pytest.fixture
+def test_database(
+    engine: AsyncEngine, session_factory: async_sessionmaker[AsyncSession]
+) -> Database:
+    """`Database` for services that manage their own units of work."""
+    return Database(engine=engine, session_factory=session_factory)
+
+
+@pytest.fixture
+def fake_llm() -> FakeProvider:
+    # Zero backoff: tests must not sleep through retries.
+    return FakeProvider(retry_base_delay=0.0)
 
 
 @pytest.fixture
@@ -184,7 +224,11 @@ def _register_probe_routes(application: FastAPI) -> None:
 
 @pytest.fixture
 def app(
-    settings: Settings, engine: AsyncEngine, db_session: AsyncSession, redis_client: Redis
+    settings: Settings,
+    db_session: AsyncSession,
+    test_database: Database,
+    redis_client: Redis,
+    fake_llm: FakeProvider,
 ) -> FastAPI:
     application = create_app(settings)
     _register_probe_routes(application)
@@ -192,15 +236,10 @@ def app(
     async def _override_db() -> AsyncIterator[AsyncSession]:
         yield db_session
 
-    # Readiness probes open their own short-lived session, so they get a Database
-    # bound to the engine rather than the test transaction.
-    probe_database = Database(
-        engine=engine, session_factory=async_sessionmaker(engine, expire_on_commit=False)
-    )
-
     application.dependency_overrides[get_db] = _override_db
-    application.dependency_overrides[get_database] = lambda: probe_database
+    application.dependency_overrides[get_database] = lambda: test_database
     application.dependency_overrides[get_redis] = lambda: redis_client
+    application.dependency_overrides[get_llm_provider] = lambda: fake_llm
     return application
 
 

@@ -18,6 +18,7 @@ from app.core.exceptions import InsightAgentError
 from app.core.logging import configure_logging, get_logger
 from app.core.middleware import RequestContextMiddleware
 from app.db.session import create_database
+from app.llm.factory import create_provider
 
 logger = get_logger(__name__)
 
@@ -42,14 +43,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings: Settings = app.state.settings
     app.state.database = create_database(settings)
     app.state.redis = create_redis(settings)
+    # Built here so a misconfigured provider fails at startup rather than on the
+    # first user message.
+    app.state.llm_provider = create_provider(settings)
     logger.info(
         "application_started",
         environment=settings.ENVIRONMENT.value,
         version=settings.VERSION,
+        llm_provider=app.state.llm_provider.name,
     )
     try:
         yield
     finally:
+        await app.state.llm_provider.aclose()
         await app.state.database.dispose()
         await app.state.redis.aclose()
         logger.info("application_stopped")
