@@ -1,0 +1,30 @@
+# Normalise line endings in the repository to LF.
+# Development is on Windows; CI, Docker images, and production are Linux. A shell
+# script or Dockerfile checked out with CRLF fails inside a Linux container with an
+# opaque "no such file or directory" on the shebang line.
+* text=auto eol=lf
+
+# Files that must be LF even on a Windows working copy.
+*.sh    text eol=lf
+*.bash  text eol=lf
+Dockerfile      text eol=lf
+*.Dockerfile    text eol=lf
+Makefile        text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+
+# Binary — never touch.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.pdf binary
+*.docx binary
+*.xlsx binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+
+# Lockfiles: keep diffs collapsed in reviews.
+uv.lock            linguist-generated=true -diff
+package-lock.json  linguist-generated=true -diff
