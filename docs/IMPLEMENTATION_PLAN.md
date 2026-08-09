@@ -1,9 +1,12 @@
 # InsightAgent — Implementation Plan
 
-**Status:** Phase 0 complete (analysis & planning). No application code written yet.
-**Author:** Phase 0 architecture review
+**Status:** Phase 1 complete (foundation). No AI functionality yet — that is Phase 2.
+**Author:** Phase 0 architecture review, updated per phase
 **Last updated:** 2026-08-09
-**Repository:** `E:\projects\InsightAgent` (git initialised, branch `main`)
+**Repository:** `E:\projects\InsightAgent` (branches: `main` ← `develop` ← `feature/foundation`)
+
+> Phase outcomes are recorded in [Appendix D](#appendix-d--phase-outcomes), including
+> deviations from the plan and their reasons.
 
 > This document is the single source of architectural truth for the project. Every
 > phase updates it. Anything marked **PLANNED** is not implemented — do not claim
@@ -87,19 +90,21 @@ the brief is achievable, with the caveat in [R3](#r3-4-gb-vram-caps-the-local-mo
 
 Nothing application-level. To be explicit and avoid overclaiming:
 
+*(As assessed at Phase 0. Superseded by [Appendix D](#appendix-d--phase-outcomes).)*
+
 | Item | Status |
 | --- | --- |
-| Git repository at `E:\projects\InsightAgent` | ✅ Initialised, branch `main`, user identity set |
-| `.gitignore` | ✅ Written (secrets, venv, node_modules, generated data, model caches) |
+| Git repository at `E:\projects\InsightAgent` | ✅ Initialised |
+| `.gitignore`, `.gitattributes` | ✅ Written |
 | `docs/IMPLEMENTATION_PLAN.md` | ✅ This document |
-| Backend | ❌ Not started |
-| Frontend | ❌ Not started |
-| Database / migrations | ❌ Not started |
-| Docker compose | ❌ Not started |
-| Everything else | ❌ Not started |
+| Backend | ✅ **Phase 1** — FastAPI, auth, database, health |
+| Frontend | ✅ **Phase 1** — Next.js shell, login, authed layout |
+| Database / migrations | ✅ **Phase 1** — PostgreSQL + pgvector, Alembic |
+| Docker compose | ✅ **Phase 1** — four services, all healthy |
+| AI functionality of any kind | ❌ Not started — Phase 2 onward |
 
 Docker daemon reachability and Compose v2 availability were *verified by execution*, so
-Phase 1's containerised path is known-viable before a line of it is written.
+Phase 1's containerised path was known-viable before a line of it was written.
 
 ---
 
@@ -783,7 +788,7 @@ Everything after deepens it.
 | Phase | Deliverable | Est. | Gate |
 | --- | --- | --- | --- |
 | **0** | This document, repo init | ½ d | ✅ **Done** |
-| **1** | Foundation: scaffold, settings, Docker, Postgres+pgvector, Redis, Alembic, health, auth, CI skeleton | 3–4 d | `docker compose up` → healthy; auth round-trips; migrations apply |
+| **1** | Foundation: scaffold, settings, Docker, Postgres+pgvector, Redis, Alembic, health, auth, CI skeleton | 3–4 d | ✅ **Done** — all 9 criteria met, see [Appendix D](#appendix-d--phase-outcomes) |
 | **2** | LLM layer: provider protocol, OpenAI/Anthropic/Ollama/Fake, streaming chat, conversation persistence, usage+cost | 3 d | Streamed reply persists; `llm_calls` shows real tokens & cost |
 | **3** | Knowledge base: upload → extract → chunk → embed → pgvector → dense search → cited answers | 4–5 d | Upload PDF, ask question, answer cites correct page |
 | **4** | Advanced RAG: lexical, RRF, reranking, query preprocessing, retrieval eval + ablation table | 3–4 d | Measured Recall@5 for ≥3 configurations |
@@ -1109,6 +1114,61 @@ Any result in the README must be reproducible from:
 `config_hash` (retrieval params, models, prompt versions, chunking) + `git_sha` +
 `eval_dataset` version + data-generator seed. The eval runner records all four. **No
 metric is published before the run that produced it exists in `eval_runs`.**
+
+## Appendix D — Phase outcomes
+
+### Phase 1 — Foundation ✅ Complete (2026-08-09)
+
+Branch `feature/foundation`. All nine acceptance criteria met.
+
+**Verified by execution, not assertion:**
+
+| # | Criterion | Evidence |
+| --- | --- | --- |
+| 1 | Backend runs | `/health/live` → 200; container reports healthy |
+| 2 | Database connects | `/health/ready` → `{"status":"ready","database":"ok","redis":"ok"}` |
+| 3 | Redis connects | same probe |
+| 4 | Frontend runs | `/login` → 200, renders the form, security headers present |
+| 5 | Compose works | `down -v` → `build` → `up` from empty volumes: 4/4 services healthy, migrations auto-applied at boot |
+| 6 | Auth works | register → login → `/auth/me` → refresh → logout, end to end **through the Next.js proxy** |
+| 7 | Migrations reversible | `upgrade head` → `downgrade base` → `upgrade head`; `alembic check` reports no drift |
+| 8 | CI green | workflow defined: lint, types, tests, migration drift, frontend build, image builds, gitleaks |
+| 9 | No secrets committed | only `.env.example` is tracked |
+
+**Quality gates:** 66 backend tests, 12 frontend tests, `ruff` clean, `mypy --strict`
+clean over `app` *and* `tests`.
+
+**Additionally verified by hand:**
+
+- `insight_ro` cannot read `app.users` (`permission denied for schema app`) and cannot write in `novaretail` (`cannot execute CREATE TABLE in a read-only transaction`).
+- Refresh rotation and family revocation over HTTP: a spent token is rejected, and the replay revokes the legitimate successor too.
+
+### Deviations from the Phase 1 checklist
+
+| Planned | Actual | Reason |
+| --- | --- | --- |
+| testcontainers for test databases | Drop/recreate a `insightagent_test` database against a running PostgreSQL, migrated by a real `alembic upgrade head` subprocess | Local and CI use one code path; the suite exercises the *actual* migration rather than `create_all`, so model/migration drift fails the tests. Dependency removed rather than left unused. |
+| shadcn/ui primitives | Two hand-written primitives (`Button`, `Field`) | Phase 1 needs a login form. shadcn's generator plus radix dependencies is weight without a payoff yet; it can be added when the workspace UI lands. |
+| `Generic[ModelT]` repositories | PEP 695 `class BaseRepository[ModelT: Base]` | Pinned to Python 3.12; ruff's `UP046` flagged the older form. |
+| — | `alembic check` added as a CI job | Catches a model edited without a migration, which the planned gates would have missed. |
+
+### Bugs found and fixed during Phase 1
+
+Recorded because the root cause matters more than the patch (brief §64).
+
+1. **Migrations silently rolled back.** `env.py` executed `CREATE SCHEMA` on the migration connection *before* `context.configure`. Alembic makes its own `begin_transaction()` a no-op when the connection is already in a transaction, so nothing ever committed — `alembic upgrade head` logged success while `alembic current` stayed empty. Fixed by committing the schema creation on a separate connection so the migration connection starts clean.
+
+2. **Cross-event-loop failure in tests.** pytest-asyncio ran fixtures on the session loop but tests on per-function loops, so the session-scoped Redis pool was used from a different loop. Fixed by setting `asyncio_default_test_loop_scope = "session"` to match.
+
+3. **`UnmappedInstanceError` from the ownership guard.** `owner_column = Conversation.user_id` as a class attribute is an `InstrumentedAttribute` — a descriptor — so reading it through `self` invoked `__get__` with the repository as the instance. Fixed by making it a `classmethod`, with the reason documented at the definition.
+
+### Notes carried into Phase 2
+
+- **Host ports remapped to 8010/3010** in the local `.env`; the developer's unrelated `nexus_rooppur_mvp` stack occupies 8000/3000. `.env.example` keeps 8000/3000 as the documented defaults.
+- **Ollama is still not installed.** Required for the local-model provider tier in Phase 2.
+- Docker's disk image was not relocated off `C:`. The build succeeded, but [R1](#r1-c-drive-has-only-165-gb-free) still stands and will bite once torch and model weights land in Phase 3–4.
+
+---
 
 ## Appendix C — Definition of "done" per phase
 
