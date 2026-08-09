@@ -1,0 +1,99 @@
+[project]
+name = "insightagent-backend"
+version = "0.1.0"
+description = "InsightAgent backend — autonomous AI research and data analysis agent"
+requires-python = ">=3.12,<3.13"
+
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "alembic>=1.14",
+    "asyncpg>=0.30",
+    "redis>=5.2",
+    "structlog>=24.4",
+    "argon2-cffi>=23.1",
+    "pyjwt>=2.10",
+    "email-validator>=2.2",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    "httpx>=0.28",
+    "ruff>=0.8",
+    "mypy>=1.13",
+]
+
+# Not a distributable package: the app is run from this directory (uvicorn app.main:app)
+# and copied wholesale into the image. Avoids a build backend we would never use.
+[tool.uv]
+package = false
+
+# ---------------------------------------------------------------------------- ruff
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["."]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",    # pycodestyle
+    "F",         # pyflakes
+    "I",         # isort
+    "N",         # pep8-naming
+    "UP",        # pyupgrade
+    "B",         # bugbear
+    "C4",        # comprehensions
+    "SIM",       # simplify
+    "ASYNC",     # async correctness
+    "S",         # bandit security
+    "T20",       # no print statements (brief §27)
+    "RUF",
+]
+ignore = [
+    "E501",   # line length is enforced by the formatter
+    "B008",   # FastAPI Depends() in defaults is the documented idiom
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106"]  # asserts and hardcoded test credentials are fine
+"migrations/**" = ["N999", "S"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+# ---------------------------------------------------------------------------- mypy
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+plugins = ["pydantic.mypy"]
+exclude = ["migrations/versions/"]
+
+[[tool.mypy.overrides]]
+module = ["testcontainers.*", "asyncpg.*"]
+ignore_missing_imports = true
+
+# --------------------------------------------------------------------------- pytest
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+# Fixtures and tests must share one loop. Session-scoped fixtures (the engine, the
+# Redis client) hold connections bound to the loop that created them; with the
+# default per-function test loop those connections are used from a different loop
+# and fail with "attached to a different loop".
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+markers = [
+    "integration: requires a live PostgreSQL and Redis",
+]
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["app/main.py"]

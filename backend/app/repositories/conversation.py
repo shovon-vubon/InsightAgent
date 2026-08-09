@@ -1,0 +1,52 @@
+"""Conversation access.
+
+Deliberately built on `OwnedRepository` in Phase 1, before any endpoint exists, so
+that Phase 2's chat feature cannot accidentally introduce an unscoped read: the
+only way to build a query here is to supply an owner id.
+"""
+
+from __future__ import annotations
+
+import uuid
+from typing import Any
+
+from sqlalchemy import func, select
+from sqlalchemy.orm import InstrumentedAttribute
+
+from app.models.conversation import Conversation, Message
+from app.repositories.base import OwnedRepository
+
+
+class ConversationRepository(OwnedRepository[Conversation]):
+    model = Conversation
+
+    @classmethod
+    def owner_column(cls) -> InstrumentedAttribute[Any]:
+        return Conversation.user_id
+
+    async def list_for_user(
+        self, user_id: uuid.UUID, *, limit: int = 50, offset: int = 0
+    ) -> list[Conversation]:
+        stmt = (
+            self.scoped(user_id)
+            .order_by(Conversation.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def create(self, *, user_id: uuid.UUID, title: str) -> Conversation:
+        conversation = Conversation(user_id=user_id, title=title)
+        self.session.add(conversation)
+        await self.session.flush()
+        return conversation
+
+    async def next_sequence(self, conversation_id: uuid.UUID) -> int:
+        """Next message ordinal. Relies on the unique index to settle races."""
+        result = await self.session.execute(
+            select(func.coalesce(func.max(Message.sequence), 0)).where(
+                Message.conversation_id == conversation_id
+            )
+        )
+        return int(result.scalar_one()) + 1
