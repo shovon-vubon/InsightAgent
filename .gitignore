@@ -1,0 +1,54 @@
+# --- Secrets -----------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# --- Python ------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# --- Node / Next.js ----------------------------------------------------------
+node_modules/
+.next/
+out/
+.turbo/
+*.tsbuildinfo
+frontend/coverage/
+playwright-report/
+test-results/
+
+# --- Data, models, artifacts -------------------------------------------------
+# Generated synthetic data and model caches are reproducible from seeds/scripts
+# and are far too large for git.
+data/generated/
+data/uploads/
+data/artifacts/
+.hf_cache/
+mlruns/
+*.duckdb
+*.sqlite3
+
+# --- Local infra -------------------------------------------------------------
+docker-compose.override.yml
+.pgdata/
+
+# --- Editors / OS ------------------------------------------------------------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
