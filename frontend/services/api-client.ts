@@ -129,6 +129,46 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
 }
 
 /**
+ * Authenticated multipart upload.
+ *
+ * Separate from `apiRequest` because the body must be `FormData` and the
+ * `Content-Type` header must be *absent* — the browser sets it itself, including
+ * the multipart boundary, and supplying one produces a body the server cannot
+ * parse.
+ */
+export async function apiUpload<T>(
+  path: string,
+  file: File,
+  options: { signal?: AbortSignal } = {},
+): Promise<T> {
+  const send = async (): Promise<Response> => {
+    const form = new FormData();
+    form.append("file", file);
+
+    const headers: Record<string, string> = {};
+    if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
+
+    return fetch(`${API_PREFIX}${path}`, {
+      method: "POST",
+      headers,
+      body: form,
+      credentials: "same-origin",
+      ...(options.signal ? { signal: options.signal } : {}),
+    });
+  };
+
+  let response = await send();
+  if (response.status === 401 && (await refreshAccessToken())) {
+    response = await send();
+  }
+
+  if (!response.ok) {
+    throw new ApiError(response.status, await parseErrorBody(response), response.statusText);
+  }
+  return (await response.json()) as T;
+}
+
+/**
  * Authenticated fetch that returns the raw `Response` with its body unread.
  *
  * Streaming endpoints cannot go through `apiRequest`, which consumes the body as

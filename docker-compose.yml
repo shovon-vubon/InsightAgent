@@ -57,10 +57,39 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app
+      # Uploaded originals. A named volume, not a bind mount: the API and the
+      # worker are separate containers that must see the same files, and the
+      # store is data rather than source.
+      - document_storage:/var/lib/insightagent/uploads
     command:
       - sh
       - -c
       - "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    restart: unless-stopped
+
+  # Document ingestion runs here, not in the request. Uploads return immediately
+  # and the knowledge base page polls for the status transition to READY.
+  worker:
+    build:
+      context: ./backend
+      target: runtime
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      # Migrations are applied by the backend's start command, so the worker must
+      # not query the schema before that has run.
+      backend:
+        condition: service_started
+    volumes:
+      - ./backend:/app
+      - document_storage:/var/lib/insightagent/uploads
+    command: ["arq", "app.worker.main.WorkerSettings"]
     restart: unless-stopped
 
   frontend:
@@ -83,3 +112,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  document_storage:

@@ -27,6 +27,14 @@ ENV PYTHONUNBUFFERED=1 \
 
 RUN groupadd --system app && useradd --system --gid app --home-dir /app app
 
+# The upload store must exist *in the image*, owned by the runtime user. Docker
+# seeds a fresh named volume from the image's directory — including its
+# ownership — so without this the mount point arrives owned by root and the
+# non-root process cannot write to it. Creating it at runtime does not help: the
+# volume is mounted over whatever the process makes.
+RUN mkdir -p /var/lib/insightagent/uploads \
+    && chown -R app:app /var/lib/insightagent
+
 COPY --from=builder /opt/venv /opt/venv
 
 WORKDIR /app

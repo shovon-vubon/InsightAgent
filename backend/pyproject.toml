@@ -19,6 +19,18 @@ dependencies = [
     "email-validator>=2.2",
     "openai>=1.60",
     "anthropic>=0.45",
+    # --- knowledge base (Phase 3) ---
+    "pgvector>=0.3.6",
+    "python-multipart>=0.0.20",
+    "arq>=0.26",
+    "tiktoken>=0.8",
+    # Document extraction. pypdf (BSD) and pdfplumber (MIT) rather than PyMuPDF,
+    # which is AGPL-3.0 and would infect a permissively licensed repository.
+    "pypdf>=5.1",
+    "pdfplumber>=0.11",
+    "python-docx>=1.1",
+    "openpyxl>=3.1",
+    "charset-normalizer>=3.4",
 ]
 
 [dependency-groups]
@@ -29,6 +41,7 @@ dev = [
     "httpx>=0.28",
     "ruff>=0.8",
     "mypy>=1.13",
+    "reportlab>=5.0.0",
 ]
 
 # Not a distributable package: the app is run from this directory (uvicorn app.main:app)
@@ -78,7 +91,15 @@ plugins = ["pydantic.mypy"]
 exclude = ["migrations/versions/"]
 
 [[tool.mypy.overrides]]
-module = ["testcontainers.*", "asyncpg.*"]
+module = [
+    "testcontainers.*",
+    "asyncpg.*",
+    "pdfplumber.*",
+    "docx.*",
+    "openpyxl.*",
+    # Test-only: generates the PDF fixture for the Phase 3 acceptance test.
+    "reportlab.*",
+]
 ignore_missing_imports = true
 
 # --------------------------------------------------------------------------- pytest

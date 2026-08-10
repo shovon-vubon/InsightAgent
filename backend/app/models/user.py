@@ -10,6 +10,7 @@ from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
 if TYPE_CHECKING:
     from app.models.conversation import Conversation
+    from app.models.document import Document
     from app.models.refresh_token import RefreshToken
 
 
@@ -50,6 +51,12 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         lazy="raise",
     )
     conversations: Mapped[list[Conversation]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        lazy="raise",
+    )
+    documents: Mapped[list[Document]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
         passive_deletes=True,

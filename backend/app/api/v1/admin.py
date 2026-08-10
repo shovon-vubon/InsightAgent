@@ -11,10 +11,11 @@ from typing import Annotated
 from fastapi import APIRouter, Query
 
 from app.api.deps import AdminUser, DbSession
+from app.api.route import CommittingRoute
 from app.repositories.llm_call import LLMCallRepository
 from app.schemas.chat import UsageSummaryRead
 
-router = APIRouter(prefix="/admin", tags=["admin"])
+router = APIRouter(prefix="/admin", tags=["admin"], route_class=CommittingRoute)
 
 
 @router.get("/usage", response_model=UsageSummaryRead)

@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, Query, Request, status
 from fastapi.responses import StreamingResponse
 
 from app.api.deps import AppSettings, CurrentUser, DbSession, get_database, get_llm_provider
+from app.api.route import CommittingRoute
 from app.core.exceptions import InsightAgentError, NotFoundError
 from app.core.logging import get_logger
 from app.db.session import Database
@@ -27,7 +28,7 @@ from app.services.chat import ChatService, SSEEvent
 
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/conversations", tags=["conversations"])
+router = APIRouter(prefix="/conversations", tags=["conversations"], route_class=CommittingRoute)
 
 
 @router.post("", response_model=ConversationRead, status_code=status.HTTP_201_CREATED)
@@ -133,7 +134,7 @@ async def send_message(
     )
 
 
-provider_router = APIRouter(prefix="/llm", tags=["llm"])
+provider_router = APIRouter(prefix="/llm", tags=["llm"], route_class=CommittingRoute)
 
 
 @provider_router.get("/provider", response_model=ProviderInfo)

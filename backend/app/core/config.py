@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import functools
 from enum import StrEnum
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, SecretStr, field_validator, model_validator
@@ -83,6 +84,37 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: SecretStr | None = None
     OLLAMA_BASE_URL: str = "http://localhost:11434"
 
+    # --- embeddings ----------------------------------------------------------
+    # Independent of LLM_PROVIDER: the model that answers and the model that
+    # embeds are separate experiment variables (see D3), and in practice they are
+    # rarely from the same vendor.
+    EMBEDDING_PROVIDER: Literal["fake", "ollama", "openai"] = "fake"
+    #: Blank uses the provider's own default model.
+    EMBEDDING_MODEL: str | None = None
+    EMBEDDING_BATCH_SIZE: int = Field(default=32, ge=1, le=512)
+    EMBEDDING_TIMEOUT_SECONDS: float = Field(default=120.0, ge=5.0, le=600.0)
+    #: Cache TTL for embeddings keyed by (model, content hash). Re-ingesting the
+    #: same document, or asking the same question twice, then costs nothing.
+    EMBEDDING_CACHE_TTL_SECONDS: int = Field(default=604_800, ge=0)
+
+    # --- knowledge base ------------------------------------------------------
+    #: Where uploaded originals are written. Outside any web-served directory,
+    #: under generated names (S4).
+    STORAGE_DIR: str = "/var/lib/insightagent/uploads"
+    MAX_UPLOAD_BYTES: int = Field(default=25 * 1024 * 1024, ge=1024)
+    MAX_DOCUMENTS_PER_USER: int = Field(default=100, ge=1)
+    MAX_STORAGE_BYTES_PER_USER: int = Field(default=250 * 1024 * 1024, ge=1024)
+
+    # --- chunking & retrieval ------------------------------------------------
+    # Part of the retrieval config that Phase 4 hashes into `config_hash`, so
+    # every measured number stays attributable to the settings that produced it.
+    CHUNK_SIZE_TOKENS: int = Field(default=512, ge=64, le=2048)
+    CHUNK_OVERLAP_TOKENS: int = Field(default=64, ge=0, le=512)
+    RETRIEVAL_TOP_K: int = Field(default=8, ge=1, le=50)
+    #: Candidates below this cosine similarity are dropped before synthesis, so a
+    #: query with no real support retrieves nothing rather than the least-bad rows.
+    RETRIEVAL_SCORE_FLOOR: float = Field(default=0.25, ge=0.0, le=1.0)
+
     @property
     def openai_api_key(self) -> str | None:
         return self.OPENAI_API_KEY.get_secret_value() if self.OPENAI_API_KEY else None
@@ -99,6 +131,10 @@ class Settings(BaseSettings):
     def is_production(self) -> bool:
         return self.ENVIRONMENT is Environment.PRODUCTION
 
+    @property
+    def storage_path(self) -> Path:
+        return Path(self.STORAGE_DIR)
+
     @field_validator("SECRET_KEY")
     @classmethod
     def _secret_key_long_enough(cls, value: SecretStr) -> SecretStr:
@@ -112,6 +148,14 @@ class Settings(BaseSettings):
         if not value.startswith("postgresql+asyncpg://"):
             raise ValueError("DATABASE_URL must use the postgresql+asyncpg:// driver")
         return value
+
+    @model_validator(mode="after")
+    def _overlap_smaller_than_chunk(self) -> Settings:
+        # Overlap >= chunk size makes the chunker either loop forever or emit
+        # duplicate chunks; catching it here beats discovering it mid-ingestion.
+        if self.CHUNK_OVERLAP_TOKENS >= self.CHUNK_SIZE_TOKENS:
+            raise ValueError("CHUNK_OVERLAP_TOKENS must be smaller than CHUNK_SIZE_TOKENS")
+        return self
 
     @model_validator(mode="after")
     def _production_hardening(self) -> Settings:
@@ -129,6 +173,10 @@ class Settings(BaseSettings):
             # Shipping the test double to production would mean serving canned
             # text as though it were model output.
             raise ValueError("LLM_PROVIDER must not be 'fake' in production")
+        if self.EMBEDDING_PROVIDER == "fake":
+            # The fake embedder is hash-based: retrieval against it is nonsense
+            # dressed up as relevance, which is worse than an outage.
+            raise ValueError("EMBEDDING_PROVIDER must not be 'fake' in production")
         return self
 
 

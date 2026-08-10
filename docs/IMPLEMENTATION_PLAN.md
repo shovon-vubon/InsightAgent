@@ -1,8 +1,8 @@
 # InsightAgent — Implementation Plan
 
-**Status:** Phase 2 complete (LLM layer & streaming chat). No retrieval or tools yet — that is Phase 3.
+**Status:** Phase 3 complete (knowledge base: ingestion, dense retrieval, cited answers). No tools, SQL, or orchestration yet.
 **Author:** Phase 0 architecture review, updated per phase
-**Last updated:** 2026-08-09
+**Last updated:** 2026-08-10
 **Repository:** `E:\projects\InsightAgent` (branches: `main` ← `develop` ← `feature/foundation`)
 
 > Phase outcomes are recorded in [Appendix D](#appendix-d--phase-outcomes), including
@@ -790,7 +790,7 @@ Everything after deepens it.
 | **0** | This document, repo init | ½ d | ✅ **Done** |
 | **1** | Foundation: scaffold, settings, Docker, Postgres+pgvector, Redis, Alembic, health, auth, CI skeleton | 3–4 d | ✅ **Done** — all 9 criteria met, see [Appendix D](#appendix-d--phase-outcomes) |
 | **2** | LLM layer: provider protocol, OpenAI/Anthropic/Ollama/Fake, streaming chat, conversation persistence, usage+cost | 3 d | ✅ **Done** — see [Appendix D](#appendix-d--phase-outcomes) |
-| **3** | Knowledge base: upload → extract → chunk → embed → pgvector → dense search → cited answers | 4–5 d | Upload PDF, ask question, answer cites correct page |
+| **3** | Knowledge base: upload → extract → chunk → embed → pgvector → dense search → cited answers | 4–5 d | ✅ **Done** — see [Appendix D](#appendix-d--phase-outcomes) |
 | **4** | Advanced RAG: lexical, RRF, reranking, query preprocessing, retrieval eval + ablation table | 3–4 d | Measured Recall@5 for ≥3 configurations |
 | **5** | SQL agent: NovaRetail generator, schema retrieval, text-to-SQL, validator, execution | 4–5 d | Correct answers to DB questions; every destructive-SQL test blocked |
 | **6** | Analysis: typed operation set, statistics, charts, provenance | 3 d | Query → statistic → chart, with provenance recorded |
@@ -1212,6 +1212,62 @@ Limitations, and it must be resolved before any model-comparison claim is made.
 - **Ollama is still not installed**, and no provider API key is set. Both are needed before any real-model claim.
 - The `agent_run_id` foreign key on `llm_calls` and `messages` lands with `agent_runs` in Phase 7; calls are attributed to a conversation until then.
 - Phase 3 adds torch and sentence-transformers, which is where [R1](#r1-c-drive-has-only-165-gb-free) (disk) and [R2](#r2-system-python-is-314-ahead-of-the-ml-wheel-ecosystem) (wheels) actually bite.
+
+---
+
+### Phase 3 — Knowledge base ✅ Complete (2026-08-10)
+
+Branch `feature/knowledge-base`. The acceptance gate — *upload PDF, ask question,
+answer cites correct page* — passes, and is pinned as a test rather than a claim.
+
+| # | Criterion | Evidence |
+| --- | --- | --- |
+| 1 | Upload → ingest → cited answer | `tests/api/test_pdf_acceptance.py` builds a real 3-page PDF, uploads it over HTTP, ingests it, asks a question answerable only on page 2, and asserts the citation's `page_from == 2` |
+| 2 | Works on the live stack | Through the Next.js proxy: upload → worker picked it up → `READY` with 3 chunks, 3 pages, title from the first heading → question answered → negative case returned explicit insufficiency → delete returned 204 |
+| 3 | Unanswerable questions refuse | Nothing clears the score floor → explicit "the knowledge base does not contain…" and **no model call**; asserted in both the API and security suites |
+| 4 | Fabricated citations cannot reach the user | A model emitting `[99]` against 2 sources has it stripped and reported in `invalid_markers`; asserted end to end |
+| 5 | Cross-user isolation | 9 security tests: retrieval, `document_ids` filtering, stats, listing, read, and delete all refuse another user's documents |
+
+**Delivered:** `EmbeddingProvider` base class with Ollama, OpenAI, and a
+deterministic implementation, plus a Redis read-through cache; content-sniffing
+upload validation with zip-bomb and traversal defences; PDF/DOCX/XLSX/CSV/TXT/MD
+extraction into a common `Block` list; de-hyphenation and repeated header/footer
+removal; structure-aware chunking with sentence-boundary overlap and character
+offsets; `documents`/`document_chunks`/`chunk_embeddings` with dimension-keyed
+partial HNSW indexes; an `arq` ingestion worker; dense retrieval with a score
+floor; deterministic citation validation; and a knowledge base UI with status
+polling and source cards.
+
+**Quality gates:** 250 backend tests, 29 frontend tests, `ruff` clean,
+`mypy --strict` clean over `app` *and* `tests`, migration `43cb018a3a35` verified
+reversible with `alembic check` reporting no drift.
+
+Design rationale in [ADR 0005](adr/0005-embedding-storage-and-retrieval.md).
+
+### Deviations from the plan
+
+| Planned | Actual | Reason |
+| --- | --- | --- |
+| `halfvec(1536)` fixed-width embedding column | Unconstrained `halfvec` with partial HNSW indexes keyed on `embedding_dim` | The plan's width assumed OpenAI. D3 requires models to coexist, and nomic-embed-text is 768-dimensional — a fixed 1536 column cannot store it without padding. Keying indexes on dimension also means a new model of an existing width needs no migration. |
+| `python-magic` for MIME sniffing | Hand-written signature sniffing | `python-magic` needs `libmagic`, which splits into `python-magic-bin` on Windows and `python-magic` on Linux. Four signatures are a dozen auditable lines with no platform story. |
+| pdfplumber for tables | Text and font sizes only | `extract_text` already includes table text, so emitting tables separately would duplicate content and skew retrieval. Deferred to Phase 5, where NovaRetail's reports actually need it. |
+| — | `reportlab` added as a dev dependency | The acceptance gate is about *pages*. Generating the fixture PDF in code states which fact is on which page; a committed binary would be opaque in review. |
+| — | `redis` pinned back to 5.x | `arq` requires `redis<6`. Everything used predates 5.0; the one `Any` leak this introduced is contained by a cast with a note to remove it if the pin lifts. |
+
+### Bugs found and fixed during Phase 3
+
+1. **Writes were not committed before the response was sent.** `get_db` committed in the teardown of a `yield` dependency, which FastAPI runs *after* the response leaves. Against the live stack, `POST /auth/register` immediately followed by `POST /auth/login` failed **5 times out of 5** with `reason=unknown_email`; a 50 ms pause made it pass 4 out of 4. Every write endpoint since Phase 1 was affected — the fast frontend paths (create a conversation then post to it, upload then poll) most of all. Fixed with a `CommittingRoute` class that commits inside the route handler, strictly before the response is returned. **The suites had not caught it because a test asserting through the same session sees its own uncommitted writes**; the regression tests now observe from a second, independent session.
+2. **`include_router` does not inherit the parent's route class.** The first version of that fix set `route_class` only on the aggregate router, which changed nothing — this FastAPI version keeps child routers nested and resolves each route against *its own* router's class. Set on every sub-router; verified behaviourally (8/8 from 0/5) rather than by introspection, which nested routers make unreliable.
+3. **The upload directory was unwritable in the container.** The image runs as a non-root user and Docker seeds a named volume from the image path, so a mount point that does not exist in the image arrives owned by `root`. Every upload failed with "The uploaded file could not be stored." Fixed by creating and chowning the directory in the Dockerfile; creating it at runtime does not help, because the volume is mounted over whatever the process makes.
+4. **Placeholder PDF metadata titles beat real headings.** Producers fill `/Title` with `untitled` or the source filename far more often than with a title, and the extractor preferred metadata unconditionally — so a document whose first heading was "Revenue Overview" was titled "untitled". Placeholder and filename-shaped titles are now rejected in favour of the first heading.
+5. **Chunks duplicated their heading and misattributed their section.** A heading-only chunk was emitted alone, then carried into the next chunk as overlap and merged back — duplicating the text — while overlap crossing a section boundary filed the previous section's sentences under the new heading, misattributing the provenance of every fact in them. Headings now lead the content they introduce, and overlap never crosses a section boundary.
+
+### Notes carried into Phase 4
+
+- **Ollama is still not installed, and no provider API key is set.** The Ollama installer rolled back for lack of disk: `C:` is down to **2.5 GB free**, which is risk [R1](#r1-c-drive-has-only-165-gb-free) arriving exactly where it was predicted to. Docker's WSL2 VHDX holds ~8 GB of images and does not return freed space to the host without a compact. The Phase 1 prerequisite — relocating Docker's data root to `E:` — is now blocking rather than advisory.
+- Consequently the Ollama and OpenAI embedding providers are implemented but **never executed against a live service**. Only the deterministic embedder has run end to end, and no retrieval quality number may be quoted until that changes.
+- Phase 4's ablation table needs a real embedding model to be meaningful; it is blocked on the same disk issue.
+- `next lint` is broken (Next 16 removed it). CI runs `typecheck`, `test`, and `build`, so no gate is affected, but the script should be migrated to `eslint` directly.
 
 ---
 

@@ -8,7 +8,7 @@ Phase 12 (brief §6 — do not use Redis unnecessarily).
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, cast
 
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
@@ -20,14 +20,21 @@ logger = get_logger(__name__)
 
 
 def create_redis(settings: Settings) -> Redis:
-    return Redis.from_url(
-        settings.REDIS_URL,
-        encoding="utf-8",
-        decode_responses=True,
-        socket_connect_timeout=5,
-        socket_timeout=5,
-        health_check_interval=30,
+    # `from_url` is untyped in redis-py 5.x, which arq pins us to (arq requires
+    # redis<6). The cast keeps the annotation honest instead of leaking `Any`
+    # into every caller; drop it if the pin is ever lifted.
+    client: Redis = cast(
+        "Redis",
+        Redis.from_url(
+            settings.REDIS_URL,
+            encoding="utf-8",
+            decode_responses=True,
+            socket_connect_timeout=5,
+            socket_timeout=5,
+            health_check_interval=30,
+        ),
     )
+    return client
 
 
 class Cache:

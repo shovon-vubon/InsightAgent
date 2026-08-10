@@ -49,6 +49,9 @@ from app.core.config import Environment, Settings
 from app.db.session import Database
 from app.llm.fake import FakeProvider
 from app.main import create_app
+from app.rag.embeddings.fake import FakeEmbeddingProvider
+from app.rag.storage import DocumentStore
+from app.services.ingestion import DocumentIngestionService
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 TEST_DB_NAME = "insightagent_test"
@@ -193,6 +196,46 @@ def fake_llm() -> FakeProvider:
 
 
 @pytest.fixture
+def fake_embedder() -> FakeEmbeddingProvider:
+    """The deterministic embedder.
+
+    Not wrapped in the Redis cache: caching is tested on its own, and a shared
+    cache between tests would make retrieval results depend on execution order.
+    """
+    return FakeEmbeddingProvider()
+
+
+@pytest.fixture
+def document_store(tmp_path: Path) -> DocumentStore:
+    """A throwaway artifact store, one directory per test."""
+    store = DocumentStore(tmp_path / "uploads")
+    store.ensure_ready()
+    return store
+
+
+@pytest.fixture
+def ingestion_service(
+    settings: Settings,
+    test_database: Database,
+    document_store: DocumentStore,
+    fake_embedder: FakeEmbeddingProvider,
+) -> DocumentIngestionService:
+    """Ingestion with no queue.
+
+    `queue=None` means `accept` stores the document and leaves it UPLOADED, and
+    the test drives `process` itself. That is deliberate: it keeps the tests free
+    of a real arq worker while exercising the same two code paths the worker uses.
+    """
+    return DocumentIngestionService(
+        database=test_database,
+        settings=settings,
+        store=document_store,
+        embedder=fake_embedder,
+        queue=None,
+    )
+
+
+@pytest.fixture
 async def redis_client(settings: Settings) -> AsyncIterator[Redis]:
     client = create_redis(settings)
     try:
@@ -229,6 +272,8 @@ def app(
     test_database: Database,
     redis_client: Redis,
     fake_llm: FakeProvider,
+    fake_embedder: FakeEmbeddingProvider,
+    document_store: DocumentStore,
 ) -> FastAPI:
     application = create_app(settings)
     _register_probe_routes(application)
@@ -240,6 +285,19 @@ def app(
     application.dependency_overrides[get_database] = lambda: test_database
     application.dependency_overrides[get_redis] = lambda: redis_client
     application.dependency_overrides[get_llm_provider] = lambda: fake_llm
+
+    # The lifespan does not run under ASGITransport, so the collaborators it
+    # would normally publish are set here. Populating `app.state` rather than
+    # overriding the service dependencies keeps the real wiring under test —
+    # `get_ingestion_service` and `get_knowledge_service` run exactly as they do
+    # in production.
+    application.state.database = test_database
+    application.state.redis = redis_client
+    application.state.llm_provider = fake_llm
+    application.state.embedding_provider = fake_embedder
+    application.state.document_store = document_store
+    # No worker in tests: uploads stay UPLOADED until a test drives `process`.
+    application.state.task_queue = None
     return application
 
 

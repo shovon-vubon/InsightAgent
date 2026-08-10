@@ -23,6 +23,7 @@ def build(**overrides: object) -> Settings:
         "LOG_FORMAT": "json",
         "CORS_ORIGINS": "https://insightagent.example",
         "LLM_PROVIDER": "openai",
+        "EMBEDDING_PROVIDER": "ollama",
     }
     return Settings(**(base | overrides))  # type: ignore[arg-type]
 
@@ -69,6 +70,18 @@ def test_the_test_double_provider_is_rejected_in_production() -> None:
         build(LLM_PROVIDER="fake")
 
 
+def test_the_test_double_embedder_is_rejected_in_production() -> None:
+    """The fake embedder is lexical: retrieval against it is not retrieval."""
+    with pytest.raises(ValidationError, match="EMBEDDING_PROVIDER must not be 'fake'"):
+        build(EMBEDDING_PROVIDER="fake")
+
+
+def test_chunk_overlap_must_be_smaller_than_chunk_size() -> None:
+    """Overlap >= size makes the chunker emit duplicates or never terminate."""
+    with pytest.raises(ValidationError, match="CHUNK_OVERLAP_TOKENS"):
+        build(CHUNK_SIZE_TOKENS=256, CHUNK_OVERLAP_TOKENS=256)
+
+
 def test_placeholder_secret_is_allowed_outside_production() -> None:
     """Development must stay frictionless; only production is locked down."""
     settings = build(
@@ -78,6 +91,7 @@ def test_placeholder_secret_is_allowed_outside_production() -> None:
         LOG_FORMAT="console",
         CORS_ORIGINS="*",
         LLM_PROVIDER="fake",
+        EMBEDDING_PROVIDER="fake",
     )
     assert not settings.is_production
 

@@ -6,10 +6,12 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
+from arq.connections import RedisSettings, create_pool
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from redis.exceptions import RedisError
 
 from app.api.v1.router import api_router
 from app.cache.redis import create_redis
@@ -19,6 +21,9 @@ from app.core.logging import configure_logging, get_logger
 from app.core.middleware import RequestContextMiddleware
 from app.db.session import create_database
 from app.llm.factory import create_provider
+from app.rag.embeddings.cache import CachingEmbeddingProvider
+from app.rag.embeddings.factory import create_embedding_provider
+from app.rag.storage import DocumentStore
 
 logger = get_logger(__name__)
 
@@ -46,15 +51,37 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Built here so a misconfigured provider fails at startup rather than on the
     # first user message.
     app.state.llm_provider = create_provider(settings)
+    app.state.embedding_provider = CachingEmbeddingProvider(
+        create_embedding_provider(settings),
+        app.state.redis,
+        ttl_seconds=settings.EMBEDDING_CACHE_TTL_SECONDS,
+    )
+
+    app.state.document_store = DocumentStore(settings.storage_path)
+    app.state.document_store.ensure_ready()
+
+    # A separate Redis connection: arq speaks its own protocol on the queue keys
+    # and expects to own the client. An unreachable queue is not fatal — uploads
+    # are still accepted and stay UPLOADED until a worker drains them.
+    try:
+        app.state.task_queue = await create_pool(RedisSettings.from_dsn(settings.REDIS_URL))
+    except (OSError, RedisError) as exc:
+        logger.warning("task_queue_unavailable", error=type(exc).__name__)
+        app.state.task_queue = None
+
     logger.info(
         "application_started",
         environment=settings.ENVIRONMENT.value,
         version=settings.VERSION,
         llm_provider=app.state.llm_provider.name,
+        embedding_provider=app.state.embedding_provider.provider_label,
     )
     try:
         yield
     finally:
+        if app.state.task_queue is not None:
+            await app.state.task_queue.aclose()
+        await app.state.embedding_provider.aclose()
         await app.state.llm_provider.aclose()
         await app.state.database.dispose()
         await app.state.redis.aclose()

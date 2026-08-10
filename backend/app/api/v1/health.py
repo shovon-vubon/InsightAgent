@@ -15,10 +15,11 @@ from redis.asyncio import Redis
 from sqlalchemy import text
 
 from app.api.deps import AppSettings, get_database, get_redis
+from app.api.route import CommittingRoute
 from app.cache.redis import Cache
 from app.db.session import Database
 
-router = APIRouter(prefix="/health", tags=["health"])
+router = APIRouter(prefix="/health", tags=["health"], route_class=CommittingRoute)
 
 ComponentStatus = Literal["ok", "unavailable"]
 

@@ -11,12 +11,13 @@ from __future__ import annotations
 from fastapi import APIRouter, Cookie, Request, Response, status
 
 from app.api.deps import AppSettings, CurrentUser, DbSession
+from app.api.route import CommittingRoute
 from app.core.config import Settings
 from app.core.exceptions import AuthenticationError
 from app.schemas.auth import AccessToken, LoginRequest, RegisterRequest, UserRead
 from app.services.auth import AuthService, IssuedTokens
 
-router = APIRouter(prefix="/auth", tags=["auth"])
+router = APIRouter(prefix="/auth", tags=["auth"], route_class=CommittingRoute)
 
 REFRESH_COOKIE_NAME = "insightagent_refresh"
 
