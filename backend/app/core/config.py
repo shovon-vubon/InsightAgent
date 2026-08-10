@@ -66,6 +66,31 @@ class Settings(BaseSettings):
     LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     LOG_FORMAT: Literal["json", "console"] = "console"
 
+    # --- language models -----------------------------------------------------
+    # Defaults to the deterministic test double so a fresh clone runs end to end
+    # before any API key exists. The UI labels it; nothing pretends it is a model.
+    LLM_PROVIDER: Literal["fake", "openai", "anthropic", "ollama"] = "fake"
+    #: Blank uses the provider's own default model.
+    LLM_MODEL: str | None = None
+    LLM_TEMPERATURE: float = Field(default=0.2, ge=0.0, le=2.0)
+    LLM_MAX_TOKENS: int = Field(default=1024, ge=64, le=32_000)
+    LLM_TIMEOUT_SECONDS: float = Field(default=60.0, ge=5.0, le=600.0)
+    LLM_MAX_RETRIES: int = Field(default=2, ge=0, le=5)
+    #: How many prior messages are replayed as context on each chat turn.
+    CHAT_HISTORY_LIMIT: int = Field(default=20, ge=2, le=100)
+
+    OPENAI_API_KEY: SecretStr | None = None
+    ANTHROPIC_API_KEY: SecretStr | None = None
+    OLLAMA_BASE_URL: str = "http://localhost:11434"
+
+    @property
+    def openai_api_key(self) -> str | None:
+        return self.OPENAI_API_KEY.get_secret_value() if self.OPENAI_API_KEY else None
+
+    @property
+    def anthropic_api_key(self) -> str | None:
+        return self.ANTHROPIC_API_KEY.get_secret_value() if self.ANTHROPIC_API_KEY else None
+
     @property
     def cors_origins(self) -> list[str]:
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
@@ -100,6 +125,10 @@ class Settings(BaseSettings):
             raise ValueError("CORS_ORIGINS may not be '*' in production")
         if self.LOG_FORMAT != "json":
             raise ValueError("LOG_FORMAT must be 'json' in production")
+        if self.LLM_PROVIDER == "fake":
+            # Shipping the test double to production would mean serving canned
+            # text as though it were model output.
+            raise ValueError("LLM_PROVIDER must not be 'fake' in production")
         return self
 
 

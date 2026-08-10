@@ -16,6 +16,7 @@ from app.core.config import Settings
 from app.core.exceptions import AuthenticationError, AuthorizationError
 from app.core.security import decode_access_token
 from app.db.session import Database
+from app.llm.base import LLMProvider
 from app.models.user import User
 from app.repositories.user import UserRepository
 
@@ -37,6 +38,11 @@ def get_database(request: Request) -> Database:
 def get_redis(request: Request) -> Redis:
     redis: Redis = request.app.state.redis
     return redis
+
+
+def get_llm_provider(request: Request) -> LLMProvider:
+    provider: LLMProvider = request.app.state.llm_provider
+    return provider
 
 
 async def get_db(

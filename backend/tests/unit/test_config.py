@@ -22,6 +22,7 @@ def build(**overrides: object) -> Settings:
         "DATABASE_URL": VALID_DB_URL,
         "LOG_FORMAT": "json",
         "CORS_ORIGINS": "https://insightagent.example",
+        "LLM_PROVIDER": "openai",
     }
     return Settings(**(base | overrides))  # type: ignore[arg-type]
 
@@ -62,6 +63,12 @@ def test_sync_database_driver_is_rejected() -> None:
         build(DATABASE_URL="postgresql://user:pass@localhost:5432/db")
 
 
+def test_the_test_double_provider_is_rejected_in_production() -> None:
+    """Shipping the fake would mean serving canned text as model output."""
+    with pytest.raises(ValidationError, match="must not be 'fake'"):
+        build(LLM_PROVIDER="fake")
+
+
 def test_placeholder_secret_is_allowed_outside_production() -> None:
     """Development must stay frictionless; only production is locked down."""
     settings = build(
@@ -70,6 +77,7 @@ def test_placeholder_secret_is_allowed_outside_production() -> None:
         DEBUG=True,
         LOG_FORMAT="console",
         CORS_ORIGINS="*",
+        LLM_PROVIDER="fake",
     )
     assert not settings.is_production
 

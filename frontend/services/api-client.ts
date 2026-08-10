@@ -128,4 +128,42 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   return (await response.json()) as T;
 }
 
+/**
+ * Authenticated fetch that returns the raw `Response` with its body unread.
+ *
+ * Streaming endpoints cannot go through `apiRequest`, which consumes the body as
+ * JSON. `EventSource` is not an option either: it cannot set an `Authorization`
+ * header, and the access token deliberately lives in memory rather than a cookie.
+ */
+export async function apiStream(
+  path: string,
+  options: { method?: "POST" | "GET"; body?: unknown; signal?: AbortSignal } = {},
+): Promise<Response> {
+  const { method = "POST", body, signal } = options;
+
+  const send = async (): Promise<Response> => {
+    const headers: Record<string, string> = { Accept: "text/event-stream" };
+    if (body !== undefined) headers["Content-Type"] = "application/json";
+    if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
+
+    return fetch(`${API_PREFIX}${path}`, {
+      method,
+      headers,
+      credentials: "same-origin",
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      ...(signal ? { signal } : {}),
+    });
+  };
+
+  let response = await send();
+  if (response.status === 401 && (await refreshAccessToken())) {
+    response = await send();
+  }
+
+  if (!response.ok) {
+    throw new ApiError(response.status, await parseErrorBody(response), response.statusText);
+  }
+  return response;
+}
+
 export { refreshAccessToken };

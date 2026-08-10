@@ -4,10 +4,12 @@ Autonomous AI research and data analysis agent — reasoning across documents, a
 relational database, quantitative datasets, and external sources, with verified
 citations and measured evaluation.
 
-> **Status: Phase 1 complete — foundation.**
-> The application runs, authenticates, and is fully containerised. **There is no AI
-> functionality yet**; that begins in Phase 2. No performance metric will appear in
-> this README until the evaluation run that produced it exists in the database.
+> **Status: Phase 2 complete — LLM layer and streaming chat.**
+> The application runs, authenticates, streams model responses, and records token
+> usage and cost per call. **There is no retrieval, SQL, or tool use yet** — that
+> starts in Phase 3, and the assistant is prompted to say so rather than guess. No
+> performance metric will appear in this README until the evaluation run that
+> produced it exists in the database.
 
 ---
 
@@ -25,7 +27,10 @@ for the full plan.
 | Docker Compose stack | ✅ Implemented | 1 |
 | CI (lint, types, tests, migrations, images, secret scan) | ✅ Implemented | 1 |
 | Frontend shell (Next.js, login, authed layout) | ✅ Implemented | 1 |
-| LLM provider abstraction & streaming chat | ⬜ Planned | 2 |
+| LLM provider abstraction (OpenAI, Anthropic, Ollama, Fake) | ⚠️ Implemented, only Fake verified live | 2 |
+| Streaming chat over SSE + conversation persistence | ✅ Implemented | 2 |
+| Token, latency, and cost tracking per call | ✅ Implemented | 2 |
+| Versioned prompt registry | ✅ Implemented | 2 |
 | Document ingestion, embeddings, citations | ⬜ Planned | 3 |
 | Hybrid retrieval + reranking | ⬜ Planned | 4 |
 | Text-to-SQL agent | ⬜ Planned | 5 |
@@ -181,12 +186,15 @@ docs/       Implementation plan, security notes, architecture decision records
 | [0001](docs/adr/0001-custom-orchestrator-over-langgraph.md) | Custom state machine instead of LangGraph |
 | [0002](docs/adr/0002-pgvector-over-qdrant.md) | pgvector in PostgreSQL instead of a separate vector database |
 | [0003](docs/adr/0003-refresh-token-rotation-in-httponly-cookie.md) | Access token in memory, refresh token in an HttpOnly cookie |
+| [0004](docs/adr/0004-llm-provider-abstraction.md) | LLM provider abstraction with a deterministic default |
 
 ---
 
 ## Limitations
 
-- **No AI functionality exists yet.** Phase 1 is infrastructure.
+- **No retrieval, SQL, or tool use exists yet.** Phases 3–7. The chat system prompt tells the model to say it cannot answer from evidence rather than guess.
+- **Only the deterministic test provider has been run end to end.** The OpenAI, Anthropic, and Ollama providers are implemented, typed, and reviewed but have never been executed against a live API, because no key is configured and Ollama is not installed. Treat them as unverified until that changes.
+- `FakeProvider`'s token counts are whitespace word counts, not real tokenisation. They exercise the accounting path; they are not billing figures.
 - Not penetration tested. Synthetic data only.
 - Registration reveals whether an email is already registered; login does not.
   Explained in [`docs/SECURITY.md`](docs/SECURITY.md).
