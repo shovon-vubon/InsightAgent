@@ -38,6 +38,12 @@ logger = get_logger(__name__)
 MAX_TRIES = 3
 #: A large PDF on a slow embedding provider is legitimately slow.
 JOB_TIMEOUT_SECONDS = 900
+#: The container healthcheck shells out to `arq ... --check`, which passes when
+#: the worker's sentinel key exists in Redis. arq gives that key a TTL of this
+#: interval plus one second, so the value is really "how stale may the answer
+#: be": arq's default hour would report a worker that died at 09:00 as healthy
+#: until 10:00. Thirty seconds bounds the lie to roughly one probe cycle.
+HEALTH_CHECK_INTERVAL_SECONDS = 30
 
 
 async def ingest_document(ctx: dict[str, Any], document_id: str) -> None:
@@ -96,5 +102,6 @@ class WorkerSettings:
     #: Modest: each job holds a database connection and an embedding request in
     #: flight, and the local Ollama tier is the bottleneck well before this is.
     max_jobs = 4
+    health_check_interval = HEALTH_CHECK_INTERVAL_SECONDS
     # arq reads this as a value, not a callable.
     redis_settings = RedisSettings.from_dsn(get_settings().REDIS_URL)

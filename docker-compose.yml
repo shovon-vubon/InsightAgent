@@ -90,6 +90,18 @@ services:
       - ./backend:/app
       - document_storage:/var/lib/insightagent/uploads
     command: ["arq", "app.worker.main.WorkerSettings"]
+    # The runtime image is shared with the API, so it carries the API's
+    # HEALTHCHECK: an HTTP GET against uvicorn's port. This container runs arq
+    # and serves no HTTP, so that probe can only ever fail — it did, 784 times,
+    # while the worker was ingesting documents perfectly well. arq's own check
+    # reads the sentinel key the worker refreshes in Redis, which tests the
+    # thing that actually matters: the event loop is alive and reaching Redis.
+    healthcheck:
+      test: ["CMD", "arq", "app.worker.main.WorkerSettings", "--check"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   frontend:
