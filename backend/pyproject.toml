@@ -42,6 +42,14 @@ dev = [
     "ruff>=0.8",
     "mypy>=1.13",
     "reportlab>=5.0.0",
+    # Reading docker-compose.yml in the worker healthcheck test. Present
+    # transitively via uvicorn[standard], but a test that imports it should say so.
+    "pyyaml>=6.0",
+    "types-pyyaml>=6.0",
+    # `.pre-commit-config.yaml` shipped in Phase 1 but was never installable from
+    # the project toolchain, so the hooks were never installed and none of the
+    # gates below ran locally. `make hooks` now provisions them.
+    "pre-commit>=4.0",
 ]
 
 # Not a distributable package: the app is run from this directory (uvicorn app.main:app)

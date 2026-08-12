@@ -1,7 +1,7 @@
 .DEFAULT_GOAL := help
 .PHONY: help up down logs ps rebuild migrate revision downgrade seed \
         test test-backend test-frontend lint typecheck fmt check \
-        build prune shell-backend shell-db
+        build prune shell-backend shell-db hooks
 
 BACKEND := cd backend &&
 FRONTEND := cd frontend &&
@@ -67,6 +67,9 @@ fmt: ## Auto-format and auto-fix
 	$(BACKEND) uv run ruff format .
 
 check: lint typecheck test ## Everything CI runs
+
+hooks: ## Install the git hooks (pre-commit and commit-msg)
+	$(BACKEND) uv run pre-commit install --install-hooks
 
 # --- misc --------------------------------------------------------------------
 

@@ -1,4 +1,7 @@
-default_install_hook_types: [pre-commit]
+# `commit-msg` matters as much as `pre-commit` here: the history already carries
+# eleven commits whose message was pasted `git status` output, and only a
+# commit-msg hook can catch that. `make hooks` installs both.
+default_install_hook_types: [pre-commit, commit-msg]
 fail_fast: false
 
 repos:
@@ -35,6 +38,14 @@ repos:
         types: [python]
         files: ^backend/
         pass_filenames: false
+
+      # Standard library only, so it runs before any environment exists and adds
+      # no measurable time to a commit.
+      - id: commit-message
+        name: Conventional Commit message
+        entry: python backend/scripts/check_commit_message.py
+        language: system
+        stages: [commit-msg]
 
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.21.2
